@@ -1,0 +1,49 @@
+name: 'Specific helmfile linter'
+description: 'This action validate all environments in a helmfile with sops secret'
+inputs:
+  helmfile-src:
+    description: 'Path where is the helmfile.yaml'
+    required: true
+  age-key:
+    description: 'Age private key to decrypted sops file'
+    required: true
+  app-id:
+    description: 'Github app id to be able to clone repos'
+    required: true
+  repositories:
+    description: 'Github repos for the token'
+    required: true
+  private-key:
+    description: 'Private key of the github app'
+    required: true
+runs:
+  using: "composite"
+  steps:
+    -
+      uses: actions/create-github-app-token@v1
+      id: app-token
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ inputs.repositories }}
+    -
+      name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        token: ${{ steps.app-token.outputs.token }}
+    -
+      name: Helmfile lint
+      shell: bash
+      run: |
+        mkdir -p ~/.config/sops/age/
+        echo ${{ inputs.age-key }} > ~/.config/sops/age/keys.txt
+        set -e
+        HELMFILE=${{ inputs.helmfile-src }}/helmfile.yaml
+        environments=$(awk '/environments:/ {flag=1; next} flag && NF {print} !NF {flag=0}' "$HELMFILE" | grep -E '^[[:space:]]{2}[a-zA-Z]+' | sed 's/^[[:space:]]*//;s/:.*//')
+        for env in $environments; do
+          echo "################### $env lint ###################"
+          helmfile -e $env -f src/helm/helmfile.yaml lint || exit 1
+          echo -e "\n"
+        done
